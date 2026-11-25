@@ -1,0 +1,38 @@
+import { canAccess, visibleTreasuries } from '@/lib/branch';
+import { eq } from 'drizzle-orm';
+import { notFound } from 'next/navigation';
+import { db, schema as s } from '@/db';
+import { addJobMaterial, addMilestone, deleteMilestone, invoiceJob, invoiceMilestone, milestoneTemplate, setJobStatus, updateJobFinance } from '@/lib/actions';
+import Link from 'next/link';
+import { Badge, Btn, Card, Field, Input, PageHeader, Select, Table, Td } from '@/components/ui';
+import { fmt, fmtDate, jobKinds, jobStatus } from '@/lib/labels';
+export const dynamic = 'force-dynamic';
+export default async function JobDetail({ params }: { params: Promise<{ id: string }> }) {
+  const id = parseInt((await params).id, 10); if (isNaN(id)) notFound();
+  const [r] = await db.select({ j: s.jobs, p: s.parties.name, b: s.branches.name }).from(s.jobs).innerJoin(s.parties, eq(s.parties.id, s.jobs.partyId)).innerJoin(s.branches, eq(s.branches.id, s.jobs.branchId)).where(eq(s.jobs.id, id));
+  if (!r) notFound(); const { j } = r; if (!(await canAccess(j.branchId))) notFound();
+  const ms = await db.select().from(s.jobMilestones).where(eq(s.jobMilestones.jobId, id)).orderBy(s.jobMilestones.id);
+  const [mats, products, tre] = await Promise.all([db.select({ m: s.jobMaterials, p: s.products }).from(s.jobMaterials).innerJoin(s.products, eq(s.products.id, s.jobMaterials.productId)).where(eq(s.jobMaterials.jobId, id)), db.select().from(s.products).orderBy(s.products.code), visibleTreasuries()]);
+  const matCost = mats.reduce((a, { m }) => a + Number(m.qty) * Number(m.unitCost), 0); const cost = matCost + Number(j.laborCost); const profit = Number(j.quoteAmount) - cost;
+  const open = j.status !== 'invoiced' && j.status !== 'cancelled';
+  return (<div className="max-w-4xl"><PageHeader title={`${j.number} — ${j.title}`} />
+    <div className="mb-5 grid gap-4 md:grid-cols-3"><Card className="md:col-span-2"><dl className="grid grid-cols-2 gap-3 text-sm"><div><dt className="text-gray-500">العميل</dt><dd className="font-medium">{r.p}</dd></div><div><dt className="text-gray-500">الفرع</dt><dd>{r.b}</dd></div>
+      <div><dt className="text-gray-500">النوع</dt><dd>{jobKinds[j.kind]}</dd></div><div><dt className="text-gray-500">الحالة</dt><dd><Badge cls={jobStatus[j.status].cls}>{jobStatus[j.status].label}</Badge></dd></div>
+      <div><dt className="text-gray-500">الموقع</dt><dd>{j.siteAddress ?? '—'}</dd></div><div><dt className="text-gray-500">البدء / الانتهاء</dt><dd>{fmtDate(j.startDate)} / {fmtDate(j.endDate)}</dd></div></dl>{j.notes && <p className="mt-3 border-t pt-3 text-sm text-gray-700">{j.notes}</p>}</Card>
+      <Card className="space-y-2 text-sm"><div>القيمة: <b>{fmt(j.quoteAmount)}</b></div><div>تكلفة الخامات: <b>{fmt(matCost)}</b></div><div>تكلفة العمالة: <b>{fmt(j.laborCost)}</b></div><div className={profit >= 0 ? 'font-bold text-green-700' : 'font-bold text-red-700'}>الربح المتوقع: {fmt(profit)}</div></Card></div>
+    {open && <Card className="mb-5"><div className="flex flex-wrap items-end gap-3">
+      <form action={setJobStatus} className="flex items-end gap-2"><input type="hidden" name="id" value={id} /><Field label="تغيير الحالة"><Select name="status" defaultValue={j.status}>{Object.entries(jobStatus).filter(([k]) => k !== 'invoiced').map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</Select></Field><Btn variant="ghost">تحديث</Btn></form>
+      <form action={updateJobFinance} className="flex items-end gap-2"><input type="hidden" name="id" value={id} /><div className="w-32"><Field label="القيمة"><Input name="quoteAmount" type="number" step="0.01" defaultValue={j.quoteAmount} /></Field></div><div className="w-32"><Field label="أجور العمالة"><Input name="laborCost" type="number" step="0.01" defaultValue={j.laborCost} /></Field></div><Btn variant="ghost">حفظ</Btn></form></div></Card>}
+    <h2 className="mb-2 font-semibold">الخامات المصروفة من مخزن {r.b}</h2>
+    <div className="mb-3"><Table head={['الصنف', 'الكمية', 'التكلفة', 'الإجمالي']}>{mats.map(({ m, p }) => <tr key={m.id}><Td>{p.code} — {p.name}</Td><Td>{fmt(m.qty)} {p.unit}</Td><Td>{fmt(m.unitCost)}</Td><Td>{fmt(Number(m.qty) * Number(m.unitCost))}</Td></tr>)}{!mats.length && <tr><Td className="text-gray-400">لا توجد</Td><Td /><Td /><Td /></tr>}</Table></div>
+    {open && <Card className="mb-6"><form action={addJobMaterial} className="flex flex-wrap items-end gap-3"><input type="hidden" name="jobId" value={id} /><div className="min-w-60 flex-1"><Field label="الصنف (حديد، براغي، ألواح…)"><Select name="productId" required defaultValue=""><option value="" disabled>اختر</option>{products.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}</Select></Field></div><div className="w-28"><Field label="الكمية"><Input name="qty" type="number" step="0.001" min="0.001" required /></Field></div><Btn>صرف من المخزن</Btn></form></Card>}
+    {(open || ms.length > 0) && <><h2 className="mb-2 mt-6 font-semibold">الدفعات المرحلية</h2>
+      <div className="mb-3"><Table head={['الدفعة', 'النسبة', 'القيمة', 'الفاتورة / الفوترة']}>{ms.map((m) => <tr key={m.id}><Td>{m.title}</Td><Td>{Number(m.percent)}%</Td><Td>{fmt(m.amount)}</Td><Td>{m.invoiceId ? <Link className="text-brand" href={`/sales/${m.invoiceId}`}>مفوترة ✓</Link> : (j.status !== 'quote' && open ?
+        <div className="flex flex-wrap items-center gap-2"><form action={invoiceMilestone} className="flex items-center gap-2"><input type="hidden" name="id" value={m.id} /><input name="paid" type="number" step="0.01" min="0" defaultValue="0" className="w-24 rounded border px-2 py-1 text-xs" title="المدفوع الآن" /><select name="treasuryId" className="rounded border px-2 py-1 text-xs"><option value="">خزينة</option>{tre.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select><button className="text-xs font-medium text-brand">فوترة</button></form>
+          <form action={deleteMilestone}><input type="hidden" name="id" value={m.id} /><button className="text-xs text-red-600">حذف</button></form></div> : <span className="text-xs text-gray-400">اعتمد الأمر أولاً</span>)}</Td></tr>)}
+        {!ms.length && <tr><Td className="text-gray-400">لا توجد دفعات (فوترة بفاتورة واحدة عند الإنجاز)</Td><Td /><Td /><Td /></tr>}</Table></div>
+      {open && <Card className="mb-6"><div className="flex flex-wrap items-end gap-3"><form action={addMilestone} className="flex flex-wrap items-end gap-3"><input type="hidden" name="jobId" value={id} /><div className="w-52"><Field label="اسم الدفعة"><Input name="title" required placeholder="مقدم / عند التوريد…" /></Field></div><div className="w-24"><Field label="النسبة %"><Input name="percent" type="number" step="0.01" min="0.01" max="100" required /></Field></div><Btn>إضافة دفعة</Btn></form>
+        {!ms.length && <form action={milestoneTemplate}><input type="hidden" name="jobId" value={id} /><Btn variant="ghost">قالب 30% / 40% / 30%</Btn></form>}</div><p className="mt-2 text-xs text-gray-500">تُفوتَر الدفعات تباعاً بعد اعتماد الأمر؛ والدفعة الأخيرة تتطلب حالة «منجز» وتتحمّل تكلفة الخامات والعمالة كاملة في التقارير.</p></Card>}</>}
+    {j.status === 'done' && ms.length === 0 && <><h2 className="mb-2 font-semibold">الفوترة</h2><Card><form action={invoiceJob} className="flex flex-wrap items-end gap-3"><input type="hidden" name="id" value={id} /><div className="w-36"><Field label="المدفوع الآن"><Input name="paid" type="number" step="0.01" min="0" defaultValue="0" /></Field></div><div className="w-48"><Field label="الخزينة"><Select name="treasuryId"><option value="">—</option>{tre.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</Select></Field></div><Btn>إصدار فاتورة بقيمة {fmt(j.quoteAmount)}</Btn></form></Card></>}
+  </div>);
+}
