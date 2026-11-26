@@ -1,2 +1,10 @@
 @tailwind base; @tailwind components; @tailwind utilities;
-body { font-family: 'Segoe UI', Tahoma, 'Noto Sans Arabic', Arial, sans-serif; background:#f8fafc; }
+body { font-family: Cairo, 'Segoe UI', Tahoma, 'Noto Sans Arabic', Arial, sans-serif; background:#f8fafc; }
+
+html.dark { filter: invert(1) hue-rotate(180deg); background: #fff; }
+html.dark img, html.dark video, html.dark .keep-colors { filter: invert(1) hue-rotate(180deg); }
+@media print { html.dark { filter: none; } }
+tbody tr:hover { background: rgb(248 250 252); }
+table td, table th { white-space: nowrap; }
+@media (max-width: 767px) { table td, table th { padding: 0.65rem 0.75rem; } }
+.grid > * { min-width: 0; }

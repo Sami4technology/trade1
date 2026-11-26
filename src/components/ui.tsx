@@ -12,7 +12,7 @@ export function PageHeader({ title, action }: { title: string; action?: { href: 
   );
 }
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`rounded-xl border border-gray-200 bg-white p-4 shadow-sm ${className}`}>{children}</div>;
+  return <div className={`rounded-2xl border border-gray-200 bg-white p-4 shadow-sm ${className}`}>{children}</div>;
 }
 export function Table({ head, children }: { head: string[]; children: ReactNode }) {
   return (
